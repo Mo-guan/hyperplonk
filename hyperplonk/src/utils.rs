@@ -218,9 +218,11 @@ pub(crate) fn build_f<F: PrimeField>(
         };
         let mut mle_list = vec![];
         if let Some(s) = *selector {
+            println!("selector id: {}", s);
             mle_list.push(selector_mles[s].clone())
         }
         for &witness in witnesses.iter() {
+            println!("witness id: {}", witness);
             mle_list.push(witness_mles[witness].clone())
         }
         res.add_mle_list(mle_list, coeff_fr)?;

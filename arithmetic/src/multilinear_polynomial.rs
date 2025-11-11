@@ -134,7 +134,8 @@ pub fn random_permutation_mles<F: PrimeField, R: RngCore>(
 
 pub fn evaluate_opt<F: Field>(poly: &DenseMultilinearExtension<F>, point: &[F]) -> F {
     assert_eq!(poly.num_vars, point.len());
-    fix_variables(poly, point).evaluations[0]
+    let tmp = fix_variables(poly, point).evaluations;
+    tmp[0]
 }
 
 pub fn fix_variables<F: Field>(
@@ -146,9 +147,10 @@ pub fn fix_variables<F: Field>(
         "invalid size of partial point"
     );
     let nv = poly.num_vars;
+
     let mut poly = poly.evaluations.to_vec();
     let dim = partial_point.len();
-    // evaluate single variable of partial point from left to right
+
     for (i, point) in partial_point.iter().enumerate().take(dim) {
         poly = fix_one_variable_helper(&poly, nv - i, point);
     }
@@ -159,16 +161,10 @@ pub fn fix_variables<F: Field>(
 fn fix_one_variable_helper<F: Field>(data: &[F], nv: usize, point: &F) -> Vec<F> {
     let mut res = vec![F::zero(); 1 << (nv - 1)];
 
-    // evaluate single variable of partial point from left to right
-    #[cfg(not(feature = "parallel"))]
+    // #[cfg(not(feature = "parallel"))]
     for i in 0..(1 << (nv - 1)) {
-        res[i] = data[i] + (data[(i << 1) + 1] - data[i << 1]) * point;
+        res[i] = data[i << 1] + (data[(i << 1) + 1] - data[i << 1]) * point;
     }
-
-    #[cfg(feature = "parallel")]
-    res.par_iter_mut().enumerate().for_each(|(i, x)| {
-        *x = data[i << 1] + (data[(i << 1) + 1] - data[i << 1]) * point;
-    });
 
     res
 }
@@ -283,4 +279,51 @@ fn fix_last_variable_helper<F: Field>(data: &[F], nv: usize, point: &F) -> Vec<F
     });
 
     res
+}
+
+pub fn compute_eq_w_x<F: Field>(w: &[F]) -> Vec<F> {
+    let ref_v = build_eq_x_r_vec(w).unwrap();
+    ref_v
+}
+pub fn build_eq_x_r_vec<F: Field>(r: &[F]) -> Result<Vec<F>, ArithErrors> {
+    let mut eval = Vec::new();
+    build_eq_x_r_helper(r, &mut eval)?;
+
+    Ok(eval)
+}
+
+fn build_eq_x_r_helper<F: Field>(r: &[F], buf: &mut Vec<F>) -> Result<(), ArithErrors> {
+    if r.is_empty() {
+        return Err(ArithErrors::InvalidParameters("r length is 0".to_string()));
+    } else if r.len() == 1 {
+        // initializing the buffer with [1-r_0, r_0]
+        buf.push(F::one() - r[0]);
+        buf.push(r[0]);
+    } else {
+        build_eq_x_r_helper(&r[1..], buf)?;
+
+        let mut res = vec![F::zero(); buf.len() << 1];
+        res.par_iter_mut().enumerate().for_each(|(i, val)| {
+            let bi = buf[i >> 1];
+            let tmp = r[0] * bi;
+            if i & 1 == 0 {
+                *val = bi - tmp;
+            } else {
+                *val = tmp;
+            }
+        });
+        *buf = res;
+    }
+
+    Ok(())
+}
+
+pub fn eq_prefix<F: PrimeField>(w: &[F], r: &[F], i: usize) -> F {
+    let mut acc = F::one();
+    for j in 0..i {
+        // term = w_j*r_j + (1-w_j)*(1-r_j)
+        let term = w[j] * r[j] + (F::one() - w[j]) * (F::one() - r[j]);
+        acc *= term;
+    }
+    acc
 }

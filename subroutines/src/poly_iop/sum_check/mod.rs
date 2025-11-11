@@ -50,6 +50,12 @@ pub trait SumCheck<F: PrimeField> {
         transcript: &mut Self::Transcript,
     ) -> Result<Self::SumCheckProof, PolyIOPErrors>;
 
+    fn prove_sqrt_space(
+        poly: &Self::VirtualPolynomial,
+        transcript: &mut Self::Transcript,
+        r: &Vec<F>,
+    ) -> Result<Self::SumCheckProof, PolyIOPErrors>;
+
     /// Verify the claimed sum using the proof
     fn verify(
         sum: F,
@@ -76,6 +82,17 @@ where
     ///
     /// Main algorithm used is from section 3.2 of [XZZPS19](https://eprint.iacr.org/2019/317.pdf#subsection.3.2).
     fn prove_round_and_update_state(
+        &mut self,
+        challenge: &Option<F>,
+    ) -> Result<Self::ProverMessage, PolyIOPErrors>;
+
+    fn prove_round_and_update_state_sqrt_space(
+        &mut self,
+        challenge: &Option<F>,
+        r: &Vec<F>,
+    ) -> Result<Self::ProverMessage, PolyIOPErrors>;
+
+    fn prove_round_and_update_state_with_compute_opti(
         &mut self,
         challenge: &Option<F>,
     ) -> Result<Self::ProverMessage, PolyIOPErrors>;
@@ -163,8 +180,44 @@ impl<F: PrimeField> SumCheck<F> for PolyIOP<F> {
         let mut challenge = None;
         let mut prover_msgs = Vec::with_capacity(poly.aux_info.num_variables);
         for _ in 0..poly.aux_info.num_variables {
-            let prover_msg =
-                IOPProverState::prove_round_and_update_state(&mut prover_state, &challenge)?;
+            let prover_msg = IOPProverState::prove_round_and_update_state(
+                &mut prover_state,
+                &challenge,
+            )?;
+            transcript.append_serializable_element(b"prover msg", &prover_msg)?;
+            prover_msgs.push(prover_msg);
+            challenge = Some(transcript.get_and_append_challenge(b"Internal round")?);
+        }
+        if let Some(p) = challenge {
+            prover_state.challenges.push(p)
+        };
+
+        end_timer!(start);
+        Ok(IOPProof {
+            point: prover_state.challenges,
+            proofs: prover_msgs,
+        })
+    }
+
+    fn prove_sqrt_space(
+        poly: &Self::VirtualPolynomial,
+        transcript: &mut Self::Transcript,
+        r: &Vec<F>,
+    ) -> Result<Self::SumCheckProof, PolyIOPErrors> {
+        let start = start_timer!(|| "sum check prove");
+
+        let f_hat = poly.build_f_hat(r.as_ref())?;
+        transcript.append_serializable_element(b"aux info", &f_hat.aux_info)?;
+
+        let mut prover_state = IOPProverState::prover_init(poly)?;
+        let mut challenge = None;
+        let mut prover_msgs = Vec::with_capacity(poly.aux_info.num_variables);
+        for _ in 0..poly.aux_info.num_variables {
+            let prover_msg = IOPProverState::prove_round_and_update_state_sqrt_space(
+                &mut prover_state,
+                &challenge,
+                r,
+            )?;
             transcript.append_serializable_element(b"prover msg", &prover_msg)?;
             prover_msgs.push(prover_msg);
             challenge = Some(transcript.get_and_append_challenge(b"Internal round")?);
